@@ -30,3 +30,5 @@ Dockerfile*
 # clangish/ctags
 tags
 compil*-flags
+# IDE
+.idea
