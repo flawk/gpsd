@@ -117,12 +117,13 @@ static char rec_vers[21] = "0";
  *  1 = SBAS      RINEX S
  *  2 = Galileo   RINEX E
  *  3 - BeiDou    RINEX C
+ *      Table 19 : RINEX BDS Observation Codes
  *  4 = IMES      not supported by RINEX
  *  5 = QZSS      RINEX J
  *  6 = GLONASS   RINEX R
  *  7 = IRNSS     RINEX I
  *
- * RINEX 3 observation codes [1]:
+ * the most common RINEX 3 observation codes [1]:
  * C1C  L1 C/A Pseudorange
  * C1P  L1 P Pseudorange
  * C1W  L1 Z-tracking Pseudorange
@@ -156,7 +157,22 @@ typedef enum {C1C = 0, D1C, L1C,
               C2L, D2L, L2L,
               C5I, D5I, L5I,
               C7I, D7I, L7I,
-              C7Q, D7Q, L7Q, CODEMAX} obs_codes;
+              C7Q, D7Q, L7Q,
+              CODEMAX} obs_codes;
+
+// convert obs_codes to strings
+static const char obs_str[CODEMAX + 1][4] = {
+    "C1C", "D1C", "L1C",
+    "C2C", "D2C", "L2C",
+    "C2L", "D2L", "L2L",
+    "C5I", "D5I", "L5I",
+    "C7I", "D7I", "L7I",
+    "C7Q", "D7Q", "L7Q",
+    "XXX",
+};
+
+#define MAX_TYPES 6     // maximum types of obs on a line
+
 /* structure to hold count of observations by gnssid:svid
  * MAXCHANNEL+1 is just a WAG of max size */
 #define MAXCNT (MAXCHANNELS + 1)
@@ -181,6 +197,18 @@ static int debug = DEBUG_INFO;               // debug level
 
 static struct gps_data_t gpsdata;
 static FILE *log_file;
+
+// array of [gnssid][obs_codes[
+obs_codes obs_set[9][MAX_TYPES + 1] = {
+    {C1C, L1C, D1C, C2C, L2C, D2C, CODEMAX},  // 0 -- GPS
+    {C1C, L1C, D1C, CODEMAX},                 // 1 -- SBAS
+    {C1C, L1C, D1C, C7Q, L7Q, D7Q, CODEMAX},  // 2 -- Galileo
+    {C1C, L1C, D1C, C7I, L7I, D7I, CODEMAX},  // 3 -- Beidou
+    {CODEMAX},                                // 4 -- IMES
+    {C1C, L1C, D1C, C2L, L2L, D2L, CODEMAX},  // 5 -- QZSS
+    {C1C, L1C, D1C, C2C, L2C, D2C, CODEMAX},  // 6 -- GLONASS
+    {CODEMAX},                                // 7 -- NavIC
+};
 
 /* convert a u-blox/gpsd gnssid to the RINEX 3 constellation code
  * see [1] Section 3.5
@@ -299,6 +327,58 @@ static int obs_cnt_prns(unsigned char gnssid)
     return prn_cnt;
 }
 
+/* types_of_obs()
+ * print a line for "SYS / # / OBS TYPES"
+ */
+static void types_of_obs(unsigned char gnssid)
+{
+    char str[MAX_TYPES][5];
+    int i;
+
+    if (GNSSID_GLO < gnssid) {
+        return;
+    }
+
+    memset(str, 0, sizeof(str));
+
+    for (i = 0; i < MAX_TYPES; i++) {
+        if (CODEMAX <= obs_set[gnssid][i]) {
+            break;
+        }
+        snprintf(str[i], sizeof(str[0]), "%s", obs_str[obs_set[gnssid][i]]);
+    }
+    (void)fprintf(log_file, "%c%5d%4s%4s%4s%4s%4s%4s%4s%4s%22s%-20s\n",
+                  gnssid2rinex(gnssid), i,
+                  str[0], str[1], str[2], str[3], str[4], str[5],
+                  "", "", "", "SYS / # / OBS TYPES");
+}
+
+/* num_of_obs()
+ * print a line for "PRN / # OF OBS"
+ */
+static void num_of_obs(struct obs_cnt_t *obs, obs_codes *codes)
+{
+    char str[MAX_TYPES][10];
+    int i;
+
+    memset(str, 0, sizeof(str));
+    for (i = 0; i < MAX_TYPES; i++) {
+        if (CODEMAX <= codes[i]) {
+            break;
+        }
+        if (0 == obs->obs_cnts[codes[i]]) {
+            strlcpy(str[i], "      ", sizeof(str[0]));
+        } else {
+            snprintf(str[i], sizeof(str[0]), "%u", obs->obs_cnts[codes[i]]);
+        }
+    }
+    (void)fprintf(log_file,"   %c%02d%6s%6s%6s%6s%6s%6s%18s%-20s\n",
+                  gnssid2rinex(obs->gnssid), obs->svid,
+                  str[0], str[1], str[2], str[3], str[4], str[5],
+                  "", "PRN / # OF OBS");
+}
+
+
 /* print_rinex_header()
  * Print a RINEX 3 header to the file "log_file".
  * Some of the data in the header is only known after processing all
@@ -366,39 +446,27 @@ static void print_rinex_header(void)
      * for some reason gfzrnx_lx wants C1C, D1C, L1C, not C1C, L1C, D1C */
     if (0 < prn_count[GNSSID_GPS]) {
         // GPS, code G
-        (void)fprintf(log_file, "%c%5d%4s%4s%4s%4s%4s%4s%4s%4s%22s%-20s\n",
-             gnssid2rinex(GNSSID_GPS), 6, "C1C", "L1C", "D1C", "C2C", "L2C",
-             "D2C", "", "", "", "SYS / # / OBS TYPES");
+        types_of_obs(GNSSID_GPS);
     }
     if (0 < prn_count[GNSSID_SBAS]) {
-        // SBAS, L1 and L5 only, code S
-        (void)fprintf(log_file, "%c%5d%4s%4s%4s%4s%4s%4s%4s%4s%22s%-20s\n",
-             gnssid2rinex(GNSSID_SBAS), 3, "C1C", "L1C", "D1C", "", "", "",
-             "", "", "", "SYS / # / OBS TYPES");
+        // SBAS, code S
+        types_of_obs(GNSSID_SBAS);
     }
     if (0 < prn_count[GNSSID_GAL]) {
-        // Galileo, E1, E5 aand E6 only, code E
-        (void)fprintf(log_file, "%c%5d%4s%4s%4s%4s%4s%4s%4s%4s%22s%-20s\n",
-             gnssid2rinex(GNSSID_GAL), 6, "C1C", "L1C", "D1C", "C7Q",
-             "L7Q", "D7Q", "", "", "", "SYS / # / OBS TYPES");
+        // Galileo, code E
+        types_of_obs(GNSSID_GAL);
     }
     if (0 < prn_count[GNSSID_BD]) {
         // BeiDou, BDS, code C
-        (void)fprintf(log_file, "%c%5d%4s%4s%4s%4s%4s%4s%4s%4s%22s%-20s\n",
-             gnssid2rinex(GNSSID_BD), 6, "C1C", "L1C", "D1C", "C7I", "L7I",
-             "D7I", "", "", "", "SYS / # / OBS TYPES");
+        types_of_obs(GNSSID_BD);
     }
     if (0 < prn_count[GNSSID_QZSS]) {
         // QZSS, code J
-        (void)fprintf(log_file, "%c%5d%4s%4s%4s%4s%4s%4s%4s%4s%22s%-20s\n",
-             gnssid2rinex(GNSSID_QZSS), 6, "C1C", "L1C", "D1C", "C2L",
-             "L2L", "D2L", "", "", "", "SYS / # / OBS TYPES");
+        types_of_obs(GNSSID_QZSS);
     }
     if (0 < prn_count[GNSSID_GLO]) {
         // GLONASS, R
-        (void)fprintf(log_file, "%c%5d%4s%4s%4s%4s%4s%4s%4s%4s%22s%-20s\n",
-             gnssid2rinex(GNSSID_GLO), 6, "C1C", "L1C", "D1C", "C2C", "L2C",
-             "D2C", "", "", "", "SYS / # / OBS TYPES");
+        types_of_obs(GNSSID_GLO);
     }
     // FIXME: Add IRNSS...
 
@@ -423,85 +491,33 @@ static void print_rinex_header(void)
         switch (obs_cnt[i].gnssid) {
         case GNSSID_GPS:
             // GPS, code G
-            (void)fprintf(log_file,"   %c%02d%6u%6u%6u%6u%6u%6u%18s%-20s\n",
-                          gnssid2rinex(obs_cnt[i].gnssid), obs_cnt[i].svid,
-                          obs_cnt[i].obs_cnts[C1C],
-                          obs_cnt[i].obs_cnts[L1C],
-                          obs_cnt[i].obs_cnts[D1C],
-                          obs_cnt[i].obs_cnts[C2C],
-                          obs_cnt[i].obs_cnts[L2C],
-                          obs_cnt[i].obs_cnts[D2C],
-                          "", "PRN / # OF OBS");
+            num_of_obs(&obs_cnt[i], obs_set[GNSSID_GPS]);
             break;
         case GNSSID_SBAS:
             // SBAS, L1C and L5C, code S
-            (void)fprintf(log_file,"   %c%02d%6u%6u%6u%6u%6u%6u%18s%-20s\n",
-                          gnssid2rinex(obs_cnt[i].gnssid), obs_cnt[i].svid,
-                          obs_cnt[i].obs_cnts[C1C],
-                          obs_cnt[i].obs_cnts[L1C],
-                          obs_cnt[i].obs_cnts[D1C],
-                          obs_cnt[i].obs_cnts[C5I],
-                          obs_cnt[i].obs_cnts[L5I],
-                          obs_cnt[i].obs_cnts[D5I],
-                          "", "PRN / # OF OBS");
+            num_of_obs(&obs_cnt[i], obs_set[GNSSID_SBAS]);
             break;
         case GNSSID_GAL:
             // Galileo, code E
-            (void)fprintf(log_file,"   %c%02d%6u%6u%6u%6u%6u%6u%18s%-20s\n",
-                          gnssid2rinex(obs_cnt[i].gnssid), obs_cnt[i].svid,
-                          obs_cnt[i].obs_cnts[C1C],
-                          obs_cnt[i].obs_cnts[L1C],
-                          obs_cnt[i].obs_cnts[D1C],
-                          obs_cnt[i].obs_cnts[C7Q],
-                          obs_cnt[i].obs_cnts[L7Q],
-                          obs_cnt[i].obs_cnts[D7Q],
-                          "", "PRN / # OF OBS");
+            num_of_obs(&obs_cnt[i], obs_set[GNSSID_GAL]);
             break;
         case GNSSID_BD:
             // BeiDou, code C
-            (void)fprintf(log_file,"   %c%02d%6u%6u%6u%6u%6u%6u%18s%-20s\n",
-                          gnssid2rinex(obs_cnt[i].gnssid), obs_cnt[i].svid,
-                          obs_cnt[i].obs_cnts[C1C],
-                          obs_cnt[i].obs_cnts[L1C],
-                          obs_cnt[i].obs_cnts[D1C],
-                          obs_cnt[i].obs_cnts[C7I],
-                          obs_cnt[i].obs_cnts[L7I],
-                          obs_cnt[i].obs_cnts[D7I],
-                          "", "PRN / # OF OBS");
+            num_of_obs(&obs_cnt[i], obs_set[GNSSID_BD]);
             break;
         case GNSSID_QZSS:
             // QZSS, code J
-            (void)fprintf(log_file,"   %c%02d%6u%6u%6u%6u%6u%6u%18s%-20s\n",
-                          gnssid2rinex(obs_cnt[i].gnssid), obs_cnt[i].svid,
-                          obs_cnt[i].obs_cnts[C1C],
-                          obs_cnt[i].obs_cnts[L1C],
-                          obs_cnt[i].obs_cnts[D1C],
-                          obs_cnt[i].obs_cnts[C2L],
-                          obs_cnt[i].obs_cnts[L2L],
-                          obs_cnt[i].obs_cnts[D2L],
-                          "", "PRN / # OF OBS");
+            num_of_obs(&obs_cnt[i], obs_set[GNSSID_QZSS]);
             break;
         case GNSSID_GLO:
             // GLONASS, code R
-            (void)fprintf(log_file,"   %c%02d%6u%6u%6u%6u%6u%6u%18s%-20s\n",
-                          gnssid2rinex(obs_cnt[i].gnssid), obs_cnt[i].svid,
-                          obs_cnt[i].obs_cnts[C1C],
-                          obs_cnt[i].obs_cnts[L1C],
-                          obs_cnt[i].obs_cnts[D1C],
-                          obs_cnt[i].obs_cnts[C2C],
-                          obs_cnt[i].obs_cnts[L2C],
-                          obs_cnt[i].obs_cnts[D2C],
-                          "", "PRN / # OF OBS");
+            num_of_obs(&obs_cnt[i], obs_set[GNSSID_GLO]);
             break;
-        // FIXME: Add GNSSID_IRNSS, L5A
         default:
-            (void)fprintf(log_file,"   %c%02d%6u%6u%6u%6s%6s%24s%-20s\n",
-                          gnssid2rinex(obs_cnt[i].gnssid), obs_cnt[i].svid,
-                          obs_cnt[i].obs_cnts[C1C],
-                          obs_cnt[i].obs_cnts[L1C],
-                          obs_cnt[i].obs_cnts[D1C],
-                          "", "",
-                          "", "PRN / # OF OBS");
+            // FIXME: Add GNSSID_IRNSS, L5A
+            (void)fprintf(stderr,"WARNING: unsupportd gnssid %u\n",
+                          obs_cnt[i].gnssid);
+            break;
         }
     }
 
@@ -641,7 +657,7 @@ static int compare_meas(const void  *A, const void  *B)
 }
 
 
-/* convert an observation item and return it as a (F14,3,I1,I1)
+/* convert an observation item and return it as a (F14.3,I1,I1)
  * in a static buffer */
 static const char * fmt_obs(double val, unsigned char lli, unsigned char snr)
 {
@@ -677,9 +693,10 @@ static const char * fmt_obs(double val, unsigned char lli, unsigned char snr)
     return buf;
 }
 
-/* one_sig() - print one signal
- *
- * one CxC s LxC DxC
+// all possible obs strings, by obs_code
+static char obs_items[CODEMAX + 1][17];
+
+/* one_sig() - decode one signal into obs_items
  */
 static void one_sig(struct meas_t *meas)
 {
@@ -701,7 +718,7 @@ static void one_sig(struct meas_t *meas)
     default:
         (void)fprintf(stderr, "ERROR: one_sig() gnmssid %u unknown sigid %u\n",
                       gnssid, sigid);
-        FALLTHROUGH
+        return;
     case 0:
         // L1C
         cxx = C1C;
@@ -773,6 +790,7 @@ static void one_sig(struct meas_t *meas)
         meas->lli |= 2;
     }
 
+    // FIXME: move to after strings dumped, may not be used
     if (0 != isfinite(meas->pseudorange)) {
         obs_cnt_inc(gnssid, svid, cxx);
     }
@@ -785,11 +803,14 @@ static void one_sig(struct meas_t *meas)
         obs_cnt_inc(gnssid, svid, dxx);
     }
 
-    (void)fputs(fmt_obs(meas->pseudorange, 0, 0), tmp_file);
+    strlcpy(obs_items[cxx], fmt_obs(meas->pseudorange, 0, 0),
+            sizeof(obs_items[cxx]));
     // putting snr here, with phase, is deprecated.
     // it should be an S observation.
-    (void)fputs(fmt_obs(meas->carrierphase, meas->lli, snr), tmp_file);
-    (void)fputs(fmt_obs(meas->doppler, 0, 0), tmp_file);
+    strlcpy(obs_items[lxx], fmt_obs(meas->carrierphase, meas->lli, snr),
+            sizeof(obs_items[lxx]));
+    strlcpy(obs_items[dxx], fmt_obs(meas->doppler, 0, 0),
+            sizeof(obs_items[dxx]));
 }
 
 
@@ -805,9 +826,8 @@ static void print_raw(struct gps_data_t *gpsdata)
     unsigned i;
     unsigned char last_gnssid = 0;
     unsigned char last_svid = 0;
-    int need_nl = 0;
-    int got_l1 = 0;
     timespec_t interval_ts;
+    // array, by obs_code, or observation item (F14.3,I1,I1)
 
     TS_SUB(&interval_ts, &gpsdata->raw.mtime, &last_mtime);
     if (!TS_GE(&interval_ts, &sample_interval_ts)) {
@@ -867,7 +887,7 @@ static void print_raw(struct gps_data_t *gpsdata)
             // bad svid
             continue;
         }
-        if (4 == gpsdata->raw.meas[i].gnssid) {
+        if (GNSSID_IMES == gpsdata->raw.meas[i].gnssid) {
             // skip IMES
             continue;
         }
@@ -897,7 +917,7 @@ static void print_raw(struct gps_data_t *gpsdata)
         first_mtime = last_mtime;     // structure copy
     }
 
-    // print epoch header line
+    // print epoch header line, GPS Time, not UTC.  No leap seconds
     now_time = gmtime_r(&(last_mtime.tv_sec), &tm_buf);
     (void)fprintf(tmp_file,"> %4d %02d %02d %02d %02d %02d.%07ld  0%3u\n",
          now_time->tm_year + 1900,
@@ -910,20 +930,16 @@ static void print_raw(struct gps_data_t *gpsdata)
 
     last_gnssid = 0;
     last_svid = 0;
-    need_nl = 0;
-    got_l1 = 0;
 
-    /* Print the observations, one gnssid:svid per line.
-     * The fun is merging consecutive records (new sigid) of
-     * same gnssid:svid */
+    /* get all the data for one sat into obs_tiems[]
+     * then later they can be ouput it arbitrary orders  */
+    memset(obs_items, 0, sizeof(obs_items));
     for (i = 0; i < nrec; i++) {
-        char rinex_gnssid;
         unsigned char gnssid;
         unsigned char svid;
         unsigned char sigid;
 
         gnssid = gpsdata->raw.meas[i].gnssid;
-        rinex_gnssid = gnssid2rinex(gnssid);
         svid = gpsdata->raw.meas[i].svid;
         sigid = gpsdata->raw.meas[i].sigid;
 
@@ -941,68 +957,34 @@ static void print_raw(struct gps_data_t *gpsdata)
         // line can be longer than 80 chars in RINEX 3
         if ((last_gnssid != gpsdata->raw.meas[i].gnssid) ||
             (last_svid != gpsdata->raw.meas[i].svid)) {
+            char rinex_gnssid;
 
-            if (0 != need_nl) {
+            rinex_gnssid = gnssid2rinex(last_gnssid);
+
+            if (0 != last_svid) {
+                int j;
+
+                (void)fprintf(tmp_file, "%c%02d", rinex_gnssid, last_svid);
+                for (j = 0; j < MAX_TYPES; j++) {
+                    int obs = obs_set[last_gnssid][j];
+
+                    if (CODEMAX == obs) {
+                        break;
+                    }
+                    (void)fprintf(tmp_file, "%16s", obs_items[obs]);
+                }
                 (void)fputs("\n", tmp_file);
             }
-            got_l1 = 0;
-            // new record line gnssid:svid preamble
-            (void)fprintf(tmp_file,"%c%02d", rinex_gnssid, svid);
+
+            // ready for new sat
+            memset(obs_items, 0, sizeof(obs_items));
         }
 
         last_gnssid = gpsdata->raw.meas[i].gnssid;
         last_svid = gpsdata->raw.meas[i].svid;
 
-        // L1x
-        switch (gpsdata->raw.meas[i].sigid) {
-        case 0:
-            // L1
-            one_sig(&gpsdata->raw.meas[i]);
-            got_l1 = 1;
-            break;
-        case 2:
-            // GLONASS L2 OF or BD B2I D1
-            if (0 == got_l1) {
-                // space to start of L2
-                (void)fprintf(tmp_file, "%48s", "");
-            }
-            one_sig(&gpsdata->raw.meas[i]);
-            break;
-        case 3:
-            // GPS L2 or BD B2I D2
-            if (0 == got_l1) {
-                // space to start of L2
-                (void)fprintf(tmp_file, "%48s", "");
-            }
-            one_sig(&gpsdata->raw.meas[i]);
-            break;
-        case 5:
-            // QZSS L2C (L)
-            if (0 == got_l1) {
-                // space to start of L2
-                (void)fprintf(tmp_file, "%48s", "");
-            }
-            one_sig(&gpsdata->raw.meas[i]);
-            break;
-        case 6:
-            // Galileo E5 bQ
-            if (0 == got_l1) {
-                // space to start of L2
-                (void)fprintf(tmp_file, "%48s", "");
-            }
-            one_sig(&gpsdata->raw.meas[i]);
-            break;
-        default:
-            (void)fprintf(stderr,
-                          "ERROR: print_raw() gnssid %u unknown sigid %u\n",
-                          gnssid, sigid);
-            break;
-        }
+        one_sig(&gpsdata->raw.meas[i]);
 
-        need_nl = 1;
-    }
-    if (0 != need_nl) {
-        (void)fputs("\n", tmp_file);
     }
     sample_count--;
 }
@@ -1334,7 +1316,9 @@ int main(int argc, char **argv)
 
     // create temp file, coverity does not like tmpfile()
     // covarfity wants a umask
-    (void)umask(0177);        // force rw-r--r--
+    // codacy comlains about umask(), can't win...
+    // Flawfinder: ignore
+    (void)umask(0177);        // force rw-------
     strlcpy(tmp_fname, "/tmp/gpsrinexXXXXXX", sizeof(tmp_fname));
     tmp_file_desc = mkstemp(tmp_fname);
     if (0 > tmp_file_desc) {
@@ -1348,6 +1332,8 @@ int main(int argc, char **argv)
                       strerror(errno));
         exit(2);
     }
+    // remove the temp file from the file system, leaving it open!
+    (void)unlink(tmp_fname);
 
     for (;;) {
         if (0 != sig_flag) {
@@ -1380,8 +1366,6 @@ int main(int argc, char **argv)
 
     print_rinex_footer();
 
-    // remove the temp file
-    (void)unlink(tmp_fname);
     if (0 != sig_flag &&
         SIGINT != sig_flag) {
         syslog(LOG_INFO, "exiting, signal %d received", sig_flag);

@@ -80,8 +80,6 @@
 #define UBX_CFG_LEN             20
 #define outProtoMask            14
 
-static gps_mask_t ubx_parse(struct gps_device_t *session, unsigned char *buf,
-                            size_t len);
 static gps_mask_t ubx_msg_log_batch(struct gps_device_t *session,
                                     unsigned char *buf, size_t data_len);
 static gps_mask_t ubx_msg_log_info(struct gps_device_t *session,
@@ -3099,7 +3097,7 @@ static gps_mask_t ubx_msg_rxm_rawx(struct gps_device_t *session,
     DTOTS(&ts_tow, rcvTow);
     // Do not set newdata.time.  set gpsdata.raw.mtime
     // RINEX 3 "GPS time", not UTC, no leap seconds
-    session->gpsdata.raw.mtime = gpsd_gpstime_resolv(session, week, ts_tow);
+    session->gpsdata.raw.mtime = gpsd_gpstime(session, week, ts_tow);
 
     /* zero the measurement data
      * so we can tell which meas never got set */
@@ -3155,7 +3153,8 @@ static gps_mask_t ubx_msg_rxm_rawx(struct gps_device_t *session,
             switch (sigId) {
             default:
                 // let PPP figure it out
-                FALLTHROUGH
+                obs_code = "XXX";
+                break;
             case 0:       // L1C/A
                 obs_code = "L1C";
                 break;
@@ -3187,7 +3186,8 @@ static gps_mask_t ubx_msg_rxm_rawx(struct gps_device_t *session,
             switch (sigId) {
             default:
                 // let PPP figure it out
-                FALLTHROUGH
+                obs_code = "XXX";
+                break;
             case 0:       //
                 obs_code = "L1C";       // u-blox calls this E1OS or E1C
                 break;
@@ -3202,22 +3202,23 @@ static gps_mask_t ubx_msg_rxm_rawx(struct gps_device_t *session,
                 break;
             }
             break;
-        case 3:       // BeiDou
+        case 3:       // BeiDou, mappings to RINUEX are a guess.
             switch (sigId) {
             default:
                 // let PPP figure it out
-                FALLTHROUGH
+                obs_code = "XXX";
+                break;
             case 0:       //
-                obs_code = "L2Q";       // u-blox calls this B1I D1
+                obs_code = "L2I";       // u-blox calls this B1I D1
                 break;
             case 1:       //
-                obs_code = "L2I";       // u-blox calls this B1I D2
+                obs_code = "L2Q";       // u-blox calls this B1I D2
                 break;
             case 2:       //
                 obs_code = "L7Q";       // u-blox calls this B2I D1
                 break;
             case 3:       //
-                obs_code = "L7I";       // u-blox calls this B2I D2
+                obs_code = "L7Q";       // u-blox calls this B2I D2
                 break;
             }
             break;
@@ -3229,7 +3230,8 @@ static gps_mask_t ubx_msg_rxm_rawx(struct gps_device_t *session,
             switch (sigId) {
             default:
                 // let PPP figure it out
-                FALLTHROUGH
+                obs_code = "XXX";
+                break;
             case 0:       //
                 obs_code = "L1C";       // u-blox calls this L1C/A
                 break;
@@ -3245,7 +3247,8 @@ static gps_mask_t ubx_msg_rxm_rawx(struct gps_device_t *session,
             switch (sigId) {
             default:
                 // let PPP figure it out
-                FALLTHROUGH
+                obs_code = "XXX";
+                break;
             case 0:       //
                 obs_code = "L1C";       // u-blox calls this L1OF
                 break;
@@ -3570,8 +3573,8 @@ ubx_msg_tim_tp(struct gps_device_t *session, unsigned char *buf,
     return mask;
 }
 
-gps_mask_t ubx_parse(struct gps_device_t * session, unsigned char *buf,
-                     size_t len)
+static gps_mask_t ubx_parse(struct gps_device_t * session, unsigned char *buf,
+                            size_t len)
 {
     size_t data_len;
     unsigned short msgid;
