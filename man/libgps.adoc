@@ -7,6 +7,7 @@
 :mansource: GPSD, Version {gpsdver}
 :robots: index,follow
 :sectlinks:
+:source-highlighter: rouge
 :toc: macro
 :type: manpage
 :webfonts!:
@@ -21,6 +22,7 @@ libgps - C service library for communicating with the GPS daemon
 
 $$C:$$
 
+[source%nowrap,c]
 ----
 #include <gps.h>
 
@@ -50,12 +52,14 @@ const char * gps_errstr(int err)
 
 Python:
 
+[source%nowrap,python]
 ----
 import gps
 session = gps.gps(host="localhost", port="2947")
 session.stream(flags=gps.WATCH_JSON)
 for report in session:
-    process(report) del session
+    process(report)
+del session
 ----
 
 == DESCRIPTION
@@ -215,12 +219,14 @@ to use the session object as an iterator, as in the example given below.
 Resources within the session object will be properly released when it is
 garbage-collected.
 
+[source%nowrap,python]
 ----
 import gps
 session = gps.gps(host="localhost", port="2947")
 session.stream(flags=gps.WATCH_JSON)
 for report in session:
-    process(report) del session
+    process(report)
+del session
 ----
 
 == ENVIRONMENT VARIABLES
@@ -235,13 +241,13 @@ instances of *gpsd* from production ones.
 The following is a fully functional minimal C client.  Check
 the C source for the other *gpsd* clients for more ideas.
 
+[source%nowrap,c,numbered]
 ----
 // example  gpsd client
 // compile this way:
 //    gcc example.c -o example -lgps -lm
 #include <gps.h>
 #include <math.h>        // for isfinite()
-#include <unistd.h>      // for sleep()
 
 #define MODE_STR_NUM 4
 static char *mode_str[MODE_STR_NUM] = {
