@@ -31,23 +31,18 @@
 static void usage(char *prog_name) {
     // "%s [-h] [-g OID] [server[:port[:device]]]\n\n"
     printf("Usage:\n"
-        "%s [-h] [-g OID]\n\n"
+        "%s [-h] [-g OID] [server[:port[:device]]]\n\n"
         "Examples:\n"
         "to get OID_VISIBLE\n"
         "   $ gpssnmp -g .1.3.6.1.2.1.25.1.31\n"
-        "   .1.3.6.1.2.1.25.1.31\n"
-        "   gauge\n"
-        "   13\n\n"
+        "   .1.3.6.1.2.1.25.1.31 = gauge: 13\n\n"
         "to get OID_USED\n"
         "   $ gpssnmp -g .1.3.6.1.2.1.25.1.32\n"
-        "   .1.3.6.1.2.1.25.1.32\n"
-        "   gauge\n"
-        "   4\n\n"
+        "   .1.3.6.1.2.1.25.1.32 = gauge: 4\n\n"
         "to get OID_SNR_AVG\n"
         "   $ gpssnmp -g .1.3.6.1.2.1.25.1.33\n"
-        "   .1.3.6.1.2.1.25.1.33\n"
-        "   gauge\n"
-        "   22.250000\n\n", prog_name);
+        "   .1.3.6.1.2.1.25.1.33 = gauge: 22.250000\n\n",
+        prog_name);
 }
 
 int main (int argc, char **argv)
@@ -60,6 +55,7 @@ int main (int argc, char **argv)
     char oid[30] = "";       // requested OID
     int debug = 0;
     struct fixsource_t source;
+    struct timespec ts_start, ts_now;
 
     const char *optstring = "?D:g:hV";
 #ifdef HAVE_GETOPT_LONG
@@ -116,26 +112,46 @@ int main (int argc, char **argv)
         exit(1);
     }
 
-    /* Grok the server, port, and device. */
+    // Grok the server, port, and device
     if (optind < argc) {
         gpsd_source_spec(argv[optind], &source);
     } else {
         gpsd_source_spec(NULL, &source);
     }
 
-    /* Open the stream to gpsd. */
-    // broken, used shared memory.
-    // status = gps_open(source.server, source.port, &gpsdata);
-    status = gps_open(GPSD_SHARED_MEMORY, DEFAULT_GPSD_PORT, &gpsdata);
+    // Open the stream to gpsd
+    status = gps_open(source.server, source.port, &gpsdata);
     if (0 != status) {
         (void)fprintf(stderr, "gpssnmp: ERROR: connection failed: %d\n",
                       status);
         exit(1);
     }
-    status = gps_read(&gpsdata, NULL, 0);
-    if (-1 == status) {
-        (void)fprintf(stderr, "gpssnmp: ERROR: read failed %d\n", status);
-        exit(1);
+    // we want JSON
+    (void)gps_stream(&gpsdata, WATCH_ENABLE | WATCH_JSON, NULL);
+
+    clock_gettime(CLOCK_REALTIME, &ts_start);
+
+    while (gps_waiting(&gpsdata, 5000000)) {
+        // FIXME: Add a timeout, we may never get the data we want.
+        status = gps_read(&gpsdata, NULL, 0);
+        if (-1 == status) {
+            (void)fprintf(stderr, "gpssnmp: ERROR: read failed %d\n", status);
+            exit(1);
+        }
+        if (SATELLITE_SET & gpsdata.set) {
+            // got what we need
+            break;
+        }
+        clock_gettime(CLOCK_REALTIME, &ts_now);
+        // use llabs(), in case time went backwards...
+        if (10 < llabs(ts_now.tv_sec - ts_start.tv_sec)) {
+            // FIXME:  Make this configurable.
+            // timeout
+            (void)fprintf(stderr, "gpssnmp: ERROR: timeout\n");
+            exit(1);
+        }
+
+
     }
     used  = gpsdata.satellites_used;
     visible = gpsdata.satellites_visible;
@@ -153,13 +169,13 @@ int main (int argc, char **argv)
     }
     if (strcmp(OID_VISIBLE, oid) == 0) {
         printf(OID_VISIBLE);
-        printf("\ngauge\n%d\n", visible);
+        printf(" = gauge: %d\n", visible);
     } else if (strcmp(OID_USED, oid) == 0) {
         printf(OID_USED);
-        printf("\ngauge\n%d\n", used);
+        printf(" = gauge: %d\n", used);
     } else if (strcmp(OID_SNR_AVG, oid) == 0) {
         printf(OID_SNR_AVG);
-        printf("\ngauge\n%lf\n", snr_avg);
+        printf(" = gauge: %lf\n", snr_avg);
     } else {
         (void)fprintf(stderr, "%s: ERROR: Unknown OID %s\n\n",
                       argv[0], oid);
