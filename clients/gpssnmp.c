@@ -1,5 +1,5 @@
 /* gpssnmp - poll local gpsd for SNMP variables
- * 
+ *
  * To build this:
  *     gcc -o gpssnmp gpssnmp.c -lgps
  *
@@ -24,24 +24,41 @@
 #include "../include/gpsdclient.h"   // for gpsd_source_spec()
 #include "../include/os_compat.h"    // for strlcpy() if needed
 
-#define OID_VISIBLE ".1.3.6.1.2.1.25.1.31"
-#define OID_USED ".1.3.6.1.2.1.25.1.32"
-#define OID_SNR_AVG ".1.3.6.1.2.1.25.1.33"
+typedef enum {
+    t_double,
+    t_sbyte,
+    t_schort,
+    t_sinteger,
+    t_slongint,
+    t_string,
+    t_ubyte,
+    t_uinteger,
+    t_ulongint,
+    t_ushort}
+gpsdata_type;
+
+struct oid_mib_xlate {
+    const char *oid;
+    const char *short_mib;
+    gpsdata_type type;
+    void *pval;
+    int64_t scale;
+};
 
 static void usage(char *prog_name) {
-    // "%s [-h] [-g OID] [server[:port[:device]]]\n\n"
     printf("Usage:\n"
-        "%s [-h] [-g OID] [server[:port[:device]]]\n\n"
+        "%s [-h] [-g OID] | [-n OID] [server[:port[:device]]]\n\n"
         "Examples:\n"
-        "to get OID_VISIBLE\n"
-        "   $ gpssnmp -g .1.3.6.1.2.1.25.1.31\n"
-        "   .1.3.6.1.2.1.25.1.31 = gauge: 13\n\n"
-        "to get OID_USED\n"
-        "   $ gpssnmp -g .1.3.6.1.2.1.25.1.32\n"
-        "   .1.3.6.1.2.1.25.1.32 = gauge: 4\n\n"
-        "to get OID_SNR_AVG\n"
-        "   $ gpssnmp -g .1.3.6.1.2.1.25.1.33\n"
-        "   .1.3.6.1.2.1.25.1.33 = gauge: 22.250000\n\n",
+        "to get the number of saltellits seen with the OID\n"
+        "   $ gpssnmp -g .1.3.6.1.4.1.59054.11.2.1.3.1\n"
+        "   .1.3.6.1.4.1.59054.11.2.1.3.1\n"
+        "   INTEGER\n"
+        "   15\n\n"
+        "to get the number of saltellits seen with the MIB name\n"
+        "   $ gpssnmp -g skynSat.1\n"
+        "   .1.3.6.1.4.1.59054.11.2.1.3.1\n"
+        "   INTEGER\n"
+        "   15\n\n",
         prog_name);
 }
 
@@ -49,20 +66,53 @@ int main (int argc, char **argv)
 {
     struct gps_data_t gpsdata;
     int i;
-    double snr_total=0;
-    double snr_avg = 0.0;
-    int status, used, visible;
-    char oid[30] = "";       // requested OID
+    double snr_total = 0;
+    double snr_avg = 0;
+    int status;
+    char oid[40] = "";       // requested get OID
+    char noid[40] = "";      // requested next OID
     int debug = 0;
     struct fixsource_t source;
     struct timespec ts_start, ts_now;
+    // keep this list sorted, o it can be "walked".
+    // for now we only handle the first device, so MIBs, end in .1
+    struct oid_mib_xlate xlate[] = {
+        // next three are "pirate" OIDs, deprecated
+        {".1.3.6.1.2.1.25.1.31", NULL, t_sinteger,
+         &gpsdata.satellites_visible, 1},
+        {".1.3.6.1.2.1.25.1.32", NULL, t_sinteger,
+         &gpsdata.satellites_used, 1},
+        {".1.3.6.1.2.1.25.1.33", NULL, t_sinteger,
+         &snr_avg, 1},
+        // previous three are "pirate" OIDs, deprecated
+        // start sky
+        {".1.3.6.1.4.1.59054.11.2.1.3.1", "skynSat.1", t_sinteger,
+         &gpsdata.satellites_visible, 1},
+        {".1.3.6.1.4.1.59054.11.2.1.4.1", "skyuSat.1", t_sinteger,
+         &gpsdata.satellites_used, 1},
+        {".1.3.6.1.4.1.59054.11.2.1.5.1", "skySNRavg.1", t_double,
+         &snr_avg, 100},
+        // end sky
+        // tpv sky
+        {".1.3.6.1.4.1.59054.13.2.1.3.1", "tpvMode.1", t_sinteger,
+         &gpsdata.fix.mode, 1},
+        {".1.3.6.1.4.1.59054.13.2.1.4.1", "tpvLatitude.1", t_double,
+         &gpsdata.fix.latitude, 100000LL},
+        {".1.3.6.1.4.1.59054.13.2.1.5.1", "tpvLongitude.1", t_double,
+         &gpsdata.fix.longitude, 100000LL},
+        // end tpv sky
+        {NULL, NULL, t_sinteger, NULL},
+    };
+    struct oid_mib_xlate *pxlate;
 
-    const char *optstring = "?D:g:hV";
+    const char *optstring = "?D:g:hn:V";
 #ifdef HAVE_GETOPT_LONG
     int option_index = 0;
     static struct option long_options[] = {
         {"debug", required_argument, NULL, 'D'},
+        {"get", required_argument, NULL, 'g'},
         {"help", no_argument, NULL, 'h'},
+        {"next", required_argument, NULL, 'n'},
         {"version", no_argument, NULL, 'V' },
         {NULL, 0, NULL, 0},
     };
@@ -77,7 +127,7 @@ int main (int argc, char **argv)
         ch = getopt(argc, argv, optstring);
 #endif
 
-        if (ch == -1) {
+        if (-1 == ch) {
             break;
         }
 
@@ -88,12 +138,15 @@ int main (int argc, char **argv)
             usage(argv[0]);
             exit(0);
             break;
-        case 'g':
-            strlcpy(oid, optarg, sizeof(oid));
-            break;
         case 'D':
             debug = atoi(optarg);
             gps_enable_debug(debug, stderr);
+            break;
+        case 'g':
+            strlcpy(oid, optarg, sizeof(oid));
+            break;
+        case 'n':
+            strlcpy(noid, optarg, sizeof(noid));
             break;
         case 'V':
             (void)fprintf(stderr, "%s: %s (revision %s)\n",
@@ -106,8 +159,18 @@ int main (int argc, char **argv)
         }
     }
 
-    if ('\0' == oid[0]) {
-        (void)fprintf(stderr, "%s: ERROR: Missing option\n\n", argv[0]);
+    if ('\0' == oid[0] &&
+        '\0' == noid[0]) {
+        (void)fprintf(stderr, "%s: ERROR: Missing option -g or -n\n\n",
+                      argv[0]);
+        usage(argv[0]);
+        exit(1);
+    }
+
+    if ('\0' != oid[0] &&
+        '\0' != noid[0]) {
+        (void)fprintf(stderr, "%s: ERROR: Use either -g or -n, not both\n\n",
+                      argv[0]);
         usage(argv[0]);
         exit(1);
     }
@@ -153,9 +216,7 @@ int main (int argc, char **argv)
 
 
     }
-    used  = gpsdata.satellites_used;
-    visible = gpsdata.satellites_visible;
-    for(i = 0; i <= used; i++) {
+    for(i = 0; i <= gpsdata.satellites_used; i++) {
         if (0 < gpsdata.skyview[i].used &&
             1 <  gpsdata.skyview[i].ss) {
             // printf("i: %d, P:%d, ss: %f\n", i, gpsdata.skyview[i].PRN,
@@ -164,24 +225,53 @@ int main (int argc, char **argv)
         }
     }
     gps_close (&gpsdata);
-    if (0 < used) {
-        snr_avg = snr_total / used;
+    if (0 < gpsdata.satellites_used) {
+        snr_avg = snr_total / gpsdata.satellites_used;
     }
-    if (strcmp(OID_VISIBLE, oid) == 0) {
-        printf(OID_VISIBLE);
-        printf(" = gauge: %d\n", visible);
-    } else if (strcmp(OID_USED, oid) == 0) {
-        printf(OID_USED);
-        printf(" = gauge: %d\n", used);
-    } else if (strcmp(OID_SNR_AVG, oid) == 0) {
-        printf(OID_SNR_AVG);
-        printf(" = gauge: %lf\n", snr_avg);
-    } else {
+    for (pxlate = xlate; NULL != pxlate->oid; pxlate++) {
+
+        if ('\0' != oid[0]) {
+            if (0 == strncmp(pxlate->oid, oid, sizeof(oid)) ||
+                (NULL != pxlate->short_mib &&
+                 0 == strncmp(pxlate->short_mib, oid, sizeof(oid)))) {
+                // get match
+            } else {
+                continue;
+            }
+        } else if ('\0' != noid[0]) {
+             int cmp = strncmp(pxlate->oid, noid, sizeof(noid));
+
+             if (0 >= cmp) {
+                // not far enough yet.
+                continue;
+             }
+             // got next match, numeric OID only
+        }
+        /* got match
+         * The output here conforms to the requierments of the
+         * "pass [-p priority] MIBOID PROG" option to snmpd.conf
+         */
+
+        if (t_sinteger == pxlate->type) {
+            printf("%s\nINTEGER\n%d\n", pxlate->oid,
+                    *(int *)pxlate->pval);
+        } else if (t_double == pxlate->type) {
+            // SNMP is too stupid to understand IEEE754, use scaled integers
+            printf("%s\nINTEGER\n%ld\n", pxlate->oid,
+                    (long)(*(double *)pxlate->pval * pxlate->scale));
+        } else {
+            (void)fprintf(stderr, "%s: ERROR: internal error, OID %s\n\n",
+                          argv[0], oid);
+        }
+        break;
+    }
+    if (NULL == pxlate->oid) {
+        // fell of the end of the list...
         (void)fprintf(stderr, "%s: ERROR: Unknown OID %s\n\n",
                       argv[0], oid);
         usage(argv[0]);
         exit(1);
     }
 
-    return 0;
+    exit(0);
 }

@@ -11,8 +11,6 @@ IMPORTS
     MODULE-IDENTITY, OBJECT-TYPE, enterprises FROM SNMPv2-SMI
     DisplayString, TimeStamp
         FROM SNMPv2-TC
-    Float64TC
-        FROM FLOAT-TC-MIB
 ;
 
 gpsd MODULE-IDENTITY
@@ -143,7 +141,7 @@ tpvNumber  OBJECT-TYPE
 
 -- the TPV table
 
--- The TPV table contains cwthe TPV data on on each connected device
+-- The TPV table contains the TPV data from each connected device
 -- See 'man gpsd_json' for more information on each variable
 
 tpvTable OBJECT-TYPE
@@ -171,10 +169,10 @@ TpvEntry ::=
         tpvIndex             INTEGER,
         tpvPath              DisplayString,
         tpvMode              INTEGER,
-        tpvLatitude          Float64TC,
-        tpvLongitude         Float64TC,
-        tpvAltHAE            Float64TC,
-        tpvAltMSL            Float64TC
+        tpvLatitude          INTEGER,
+        tpvLongitude         INTEGER,
+        tpvAltHAE            INTEGER,
+        tpvAltMSL            INTEGER
       }
 
 tpvIndex OBJECT-TYPE
@@ -202,35 +200,36 @@ tpvMode OBJECT-TYPE
     ::= { tpvEntry 3 }
 
 tpvLatitude OBJECT-TYPE
-    SYNTAX      Float64TC
+    SYNTAX      INTEGER
     MAX-ACCESS  read-only
     STATUS      current
     DESCRIPTION
-            "The device Latitude in degrees."
+            "The device Latitude in degrees. Times 1e5"
     ::= { tpvEntry 4 }
 
 tpvLongitude OBJECT-TYPE
-    SYNTAX      Float64TC
+    SYNTAX      INTEGER
     MAX-ACCESS  read-only
     STATUS      current
     DESCRIPTION
-            "The device Longitude in degrees."
+            "The device Longitude in degrees. Times 1e5"
     ::= { tpvEntry 5 }
 
 tpvAltHAE OBJECT-TYPE
-    SYNTAX      Float64TC
+    SYNTAX      INTEGER
     MAX-ACCESS  read-only
     STATUS      current
     DESCRIPTION
-            "The device altitude above the(maybe WGS84) ellipsoid in meters."
+            "The device altitude above the(maybe WGS84) ellipsoid in meters.
+             Times 1e4."
     ::= { tpvEntry 6 }
 
 tpvAltMSL OBJECT-TYPE
-    SYNTAX      Float64TC
+    SYNTAX      INTEGER
     MAX-ACCESS  read-only
     STATUS      current
     DESCRIPTION
-            "The device altitude MSL in meters."
+            "The device altitude MSL in meters. Time 1e4."
     ::= { tpvEntry 7 }
 
 -- sky - Stuff from the SKY JSON class
@@ -243,9 +242,9 @@ skyNumber  OBJECT-TYPE
             "The number of devices in skyTable, regardless of current state."
     ::= { sky 1 }
 
--- the TPV table
+-- the SKY table
 
--- The TPV table contains cwthe TPV data on on each connected device
+-- The SKY table contains the SKY JSON data from each connected device
 -- See 'man gpsd_json' for more information on each variable
 
 skyTable OBJECT-TYPE
@@ -272,8 +271,9 @@ SkyEntry ::=
       SEQUENCE {
         skyIndex             INTEGER,
         skyPath              DisplayString,
-        skynSat              INTEGER,
-        skyuSat              INTEGER
+        skynSat              INTEGER,       -- aka "seen"
+        skyuSat              INTEGER,       -- used
+        skySNRavg            INTEGER        -- average SNR
       }
 
 skyIndex OBJECT-TYPE
@@ -307,6 +307,14 @@ skyuSat OBJECT-TYPE
     DESCRIPTION
             "number of sats used by this device"
     ::= { skyEntry 4 }
+
+skySNRavg OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+            "average SNR or all satellites in use, times 100."
+    ::= { skyEntry 5 }
 
 
 END
