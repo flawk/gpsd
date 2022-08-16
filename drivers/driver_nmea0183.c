@@ -1401,13 +1401,6 @@ static int nmeaid_to_prn(char *talker, int nmea_satnum,
     } else if (0 < nmea_gnssid) {
         // this switch handles case where nmea_gnssid is known
         switch (nmea_gnssid) {
-        default:
-            // x = IMES                Not defined by NMEA 4.10
-            FALLTHROUGH
-        case 0:
-            // none given, ignore
-            nmea2_prn = 0;
-            break;
         case 1:
             if (33 > nmea_satnum) {
                 // 1 = GPS       1-32
@@ -1455,11 +1448,11 @@ static int nmeaid_to_prn(char *talker, int nmea_satnum,
             //  2 = GLONASS   65-96, nul
             *ubx_gnssid = 6;
             if (64 > nmea_satnum) {
-                // NMEA 1 - 64
+                // NMEA svid 1 - 64
                 *ubx_svid = nmea_satnum;
             } else {
-                // SiRF quirk 65-96
-                // Jackson Labs Micro JLT quirk 65-96
+                /* Jackson Labs Micro JLT, Quectel Querk, SiRF, Skytrak, u-blox quirk:
+                 * GLONASS are  65 to 96 */
                 *ubx_svid = nmea_satnum - 64;
             }
             nmea2_prn = 64 + *ubx_svid;
@@ -1519,6 +1512,11 @@ static int nmeaid_to_prn(char *talker, int nmea_satnum,
             *ubx_gnssid = 7;
             *ubx_svid = nmea_satnum;
             nmea2_prn = nmea_satnum + 500;  // This is wrong...
+            break;
+        default:
+            // unknown
+            // x = IMES                Not defined by NMEA 4.10
+            nmea2_prn = 0;
             break;
         }
 
@@ -1812,6 +1810,9 @@ static gps_mask_t processGSA(int count, char *field[],
                      "NMEA0183: xxGSA: clear sats_used\n");
         }
         session->nmea.last_gsa_talker = GSA_TALKER;
+
+        /* figure out which constellation(s) this GSA is for by looking
+         * at the talker ID. */
         switch (session->nmea.last_gsa_talker) {
         case 'A':
             // GA Galileo
@@ -1839,6 +1840,8 @@ static gps_mask_t processGSA(int count, char *field[],
         case 'N':
             // GN GNSS
             session->nmea.seen_gngsa = true;
+            // field 18 is the NMEA gnssid in 4.10 and up.
+            nmea_gnssid = atoi(field[18]);
             break;
         case 'P':
             // GP GPS
@@ -4234,15 +4237,16 @@ gps_mask_t nmea_parse(char *sentence, struct gps_device_t * session)
         {"PASHR", NULL, 3, false, processPASHR},
         // Furuno proprietary
         {"PERDACK", NULL, 4, false, NULL},          // ACK
+        // {"PERDAPI", NULL, 3, false, NULL},          // Config Send
         {"PERDCRD", NULL, 15, false, NULL},         // NLOSMASK?
         {"PERDCRG", "DCR", 6, false, NULL},         // QZSS DC report
         {"PERDCRJ", "FREQ", 9, false, NULL},        // Jamming Status
         {"PERDCRP", NULL, 9, false, NULL},          // Position
         {"PERDCRQ", NULL, 11, false, NULL},         // Galileo SAR
         {"PERDCRW", "TPS1", 8, false, NULL},        // Time
-        {"PERDCRW", "TPS2", 12, false, NULL},       // PPS
-        {"PERDCRW", "TPS3", 11, false, NULL},       // Position Mode
-        {"PERDCRW", "TPS4", 13, false, NULL},       // GCLK
+        {"PERDCRX", "TPS2", 12, false, NULL},       // PPS
+        {"PERDCRY", "TPS3", 11, false, NULL},       // Position Mode
+        {"PERDCRZ", "TPS4", 13, false, NULL},       // GCLK
         {"PERDMSG", NULL, 3, false, NULL},          // Message
         {"PERDSYS", "ANTSEL", 5, false, NULL},      // Antenna
         {"PERDSYS", "FIXSESSION", 5, false, NULL},  // Fix Session

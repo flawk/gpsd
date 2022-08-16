@@ -848,11 +848,11 @@ if options.target:
     # override host, port and device with target
     arg = options.target.split(':')
     len_arg = len(arg)
-    if len_arg == 1:
+    if 1 == len_arg:
         (options.host,) = arg
-    elif len_arg == 2:
+    elif 2 == len_arg:
         (options.host, options.port) = arg
-    elif len_arg == 3:
+    elif 3 == len_arg:
         (options.host, options.port, options.device) = arg
     else:
         parser.print_help()
@@ -896,12 +896,12 @@ if options.continuous:
     options.satpos = True
 
 try:
-    while True:
-        try:
-            msg = session.next()
-        except StopIteration:
-            # most likely end of file, maybe lost connection to gpsd
-            break
+    while 0 == session.read():
+        if not hasattr(session, "data"):
+            # no data yet
+            continue
+
+        msg = session.data       # shortcut
 
         if not msg or 'class' not in msg:
             # ??

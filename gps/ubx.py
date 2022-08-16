@@ -1532,6 +1532,13 @@ class ubx(object):
          "Data bytes 17-24"),
         ("CFG-RINV-CHUNK3", 0x50c70007, "X8", 1, "",
          "Data bytes 25-30 (MSB)"),
+        # CFG-RTCM-
+        ("CFG-RTCM-DF003_IN", 0x30090008, "U2", 1, "",
+         "RTCM DF003 reference station ID (input)"),
+        ("CFG-RTCM-DF003_IN_FILTER", 0x20090009, "E1", 1, "",
+         "RTCM input filter configuration based on DF003 value"),
+        ("CFG-RTCM-DF003_OUT", 0x30090001, "U2", 1, "",
+         "RTCM DF003 reference station ID (output)"),
         # CFG-SBAS-
         ("CFG-SBAS", 0x1036ffff, "", 0, "",
          "get all CFG-SBAS"),
@@ -3136,7 +3143,7 @@ Deprecated in protVer 34.00
                   0: '  flags %#x reserved3 %u',
                   }.get(portid, '  ??? %u,%u') % tuple(u[7:]))
 
-        if portid == 0:
+        if 0 == portid:
             s.append('    slaveAddr %#x' % (u[3] >> 1 & 0x7F))
 
         s.append('    inProtoMask (%s)\n'
@@ -6313,7 +6320,7 @@ protVer 34 and up
             page |= words[i] & 0x03fffffff
 
         # sanity check
-        if (FraID != ((page >> 282) & 7)):
+        if (((page >> 282) & 7) != FraID):
             s = ("\n    BDS: Math Error! %u != %u"
                  "\n      page %u" %
                  (FraID, (page >> 282) & 7, page))
@@ -6556,7 +6563,7 @@ protVer 34 and up
         page |= (words[4] >> 14) & 0x0ffff
 
         # sanity check
-        if (word_type != ((page >> 122) & 0x3f)):
+        if (((page >> 122) & 0x3f) != word_type):
             s += "\n    Math Error!"
             return s
 
@@ -6758,7 +6765,7 @@ protVer 34 and up
             page |= words[i] & 0x0ffffffff
 
         # sanity check
-        if (stringnum != ((page >> 123) & 0x0f)):
+        if (((page >> 123) & 0x0f) != stringnum):
             s = ("\n    GLO: Math Error! %u != %u"
                  "\n      page %u" %
                  (stringnum, (page >> 123) & 0xf, page))
@@ -6877,7 +6884,7 @@ protVer 34 and up
 
         s = "\n   SBAS: preamble %u type %u" % (preamble, msg_type)
         # sanity check
-        if (msg_type != ((page >> 244) & 0x03f)):
+        if (((page >> 244) & 0x03f) != msg_type):
             s += ("\n    Math Error! %u != %u"
                   "\n    x%x" %
                   (msg_type, (page >> 212) & 0x3f, page))
@@ -8136,7 +8143,7 @@ qErrInvalid add in protVer 34 and up
                 # UBX-CFG-MSG
                 self.gps_send(6, 1, m_data)
 
-            if 27 <=self.protver:
+            if 27 <= self.protver:
                 for id in ubx_27_nav_on:
                     m_data[1] = id
                     # UBX-CFG-MSG
