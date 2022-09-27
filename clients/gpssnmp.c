@@ -13,20 +13,28 @@
 #ifdef HAVE_GETOPT_LONG
    #include <getopt.h>
 #endif
-#include <math.h>                    // for isfinite()
+#include <math.h>                    // for isfinite(), fabs()
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>                  // for strlcpy()
+#include <unistd.h>                  // for alarm()
 
 #include "../include/compiler.h"     // for FALLTHROUGH
 #include "../include/gps.h"
 #include "../include/gpsdclient.h"   // for gpsd_source_spec()
 #include "../include/os_compat.h"    // for strlcpy() if needed
+#include "../include/timespec.h"     // for TS_SUB_D()
 
 #define PROGNAME "gpssnmp"
-static int debug = 0;                       // debug level
-static struct gps_data_t gpsdata;
-static int one = 1;                         // the one!
+static int debug = 0;                      // debug level
+static struct gps_data_t gpsdata;          // last received gps_data_t
+// cached copies of gpsdata, only useful in persist mode
+// FIXME: need a better way to "age-out" the caches.
+static struct gps_data_t gpsdata_sky;      // cached gps_data_t with sky
+static struct gps_data_t gpsdata_tpv;      // cached gps_data_t with TPV
+static struct gps_data_t gpsdata_ver;      // cached gps_data_t with VERSION_SET
+
+static int one = 1;                        // the one!
 static double snr_avg = 0;
 static FILE *logfd;
 
@@ -38,6 +46,7 @@ typedef enum {
     t_sinteger,
     t_slongint,
     t_string,
+    t_time,
     t_ubyte,
     t_uinteger,
     t_ulongint,
@@ -175,6 +184,9 @@ static const struct oid_mib_xlate xlate[] = {
     {".1.3.6.1.4.1.59054.13.3.1.19.1", "tpvEpy.1", t_double,
      &gpsdata.fix.epy, 100000, -1, HERR_SET,
      "Estimated latitude error in meters."},
+    {".1.3.6.1.4.1.59054.13.3.1.20.1", "tpvTime.1", t_time,
+     &gpsdata.fix.time, 1, -1, TIME_SET,
+     "UTC time of fix."},
     // end tpv
     // start version
     {".1.3.6.1.4.1.59054.14.1", "verRelease", t_string,
@@ -262,12 +274,18 @@ static void get_line(char *inbuf, size_t inbuf_len)
 
     inbuf_len--;
 
-    // FIXME: need some sort of timeout?
+    errno = 0;
+    // Don't hang forever in the syscall
+    alarm(3);
+    inbuf[0] = '\0';
     s = fgets(inbuf, inbuf_len, stdin);
+    alarm(0);
 
-    if (NULL == s) {
+    if (NULL == s ||
+        '\0' == s[0]) {
         // read error
-        fprintf(logfd, PROGNAME ": got NULL\n");
+        fprintf(logfd, PROGNAME ": fgets()got NULL. %s(%d)\n",
+                strerror(errno), errno);
         exit(0);
     }
     // remove the trailing \n, if any
@@ -288,15 +306,15 @@ static void get_line(char *inbuf, size_t inbuf_len)
     }
 
     fprintf(logfd, PROGNAME ": got s: %s\n", s);
+    if (0 != fflush(logfd)) {
+        // flush error
+        fprintf(logfd, PROGNAME ": fflush() error %d\n", errno);
+        exit(1);
+    }
     if ('\0' == s[0]) {
         // done
         puts("");
         exit(0);
-    }
-    if (0 != fflush(NULL)) {
-        // flush error
-        fprintf(logfd, PROGNAME ": fflush() error %d\n", errno);
-        exit(1);
     }
 }
 
@@ -324,7 +342,8 @@ static void put_line(const char *outbuf)
         }
     }
     // flush it
-    if (0 != fflush(NULL)) {
+    if (0 != fflush(stdout) ||
+        0 != fflush(logfd)) {
         // flush error
         (void)fprintf(logfd, PROGNAME ": fflush() error %d\n", errno);
         exit(1);
@@ -350,18 +369,34 @@ static void get_one(gps_mask_t need)
         // nothing needed
         return;
     }
-    /* FIXME: VERSION_SET only come once after connect, so once
-     * persist mode is imlemented, will need to cache that data.
-     * Similar for DEVICELIST_SET */
 
+    if (need == (need & gpsdata_sky.set)) {
+        // use cached SKY data, hopefully not very stale...
+        gpsdata = gpsdata_sky;
+        return;
+    }
+    if (need == (need & gpsdata_tpv.set)) {
+        // use cached TPV data, hopefully not very stale...
+        gpsdata = gpsdata_tpv;
+        return;
+    }
+    if (VERSION_SET == need &&
+        '\0' != gpsdata_ver.version.release[0]) {
+        // use cached version data
+        gpsdata = gpsdata_ver;
+        return;
+    }
+
+    // snmpd is impatient, it will not wait longer than 5 seconds.
     clock_gettime(CLOCK_REALTIME, &ts_start);
 
-    while (gps_waiting(&gpsdata, 5000000)) {
+    // timout is in micro seconds.
+    while (gps_waiting(&gpsdata, 2 * US_IN_SEC)) {
 
-        // wait 10 seconds, tops.
+        // wait 3 seconds, tops.
         clock_gettime(CLOCK_REALTIME, &ts_now);
-        // use llabs(), in case time went backwards...
-        if (10 < llabs(ts_now.tv_sec - ts_start.tv_sec)) {
+        // use fabs(), in case time went backwards...
+        if (3 < fabs(TS_SUB_D(&ts_now, &ts_start))) {
             // FIXME:  Make this configurable.
             // timeout
             (void)fputs(PROGNAME ": ERROR: timeout", logfd);
@@ -374,21 +409,36 @@ static void get_one(gps_mask_t need)
                           status);
             exit(1);
         }
+        if (SATELLITE_SET == (SATELLITE_SET & gpsdata.set)) {
+            // cache SKY, good for persist mode
+            gpsdata_sky = gpsdata;
+        } else if (MODE_SET == (MODE_SET & gpsdata.set)) {
+            // cache TPV, good for persist mode
+            gpsdata_tpv = gpsdata;
+        } else if (VERSION_SET == (VERSION_SET & gpsdata.set)) {
+            /* VERSION_SET only come once after connect, so cache
+             * that data when we get it. */
+            // FIXME: do Similar for DEVICELIST_SET
+            gpsdata_ver = gpsdata;
+        }
         if (need == (need & gpsdata.set)) {
             // got something
             break;
         }
     }
-    for(i = 0; i <= gpsdata.satellites_used; i++) {
-        if (0 < gpsdata.skyview[i].used &&
-            1 <  gpsdata.skyview[i].ss) {
-            // printf("i: %d, P:%d, ss: %f\n", i, gpsdata.skyview[i].PRN,
-            //         gpsdata.skyview[i].ss);
-            snr_total += gpsdata.skyview[i].ss;
+    if (SATELLITE_SET == (need & gpsdata.set)) {
+        // compute a derived value: snr_avg
+        for(i = 0; i <= gpsdata.satellites_used; i++) {
+            if (0 < gpsdata.skyview[i].used &&
+                1 <  gpsdata.skyview[i].ss) {
+                // printf("i: %d, P:%d, ss: %f\n", i, gpsdata.skyview[i].PRN,
+                //         gpsdata.skyview[i].ss);
+                snr_total += gpsdata.skyview[i].ss;
+            }
         }
-    }
-    if (0 < gpsdata.satellites_used) {
-        snr_avg = snr_total / gpsdata.satellites_used;
+        if (0 < gpsdata.satellites_used) {
+            snr_avg = snr_total / gpsdata.satellites_used;
+        }
     }
 }
 
@@ -427,13 +477,14 @@ static const struct oid_mib_xlate *oid_lookup(const char *oid,
                 continue;
             }
             // get match
+            compare = 0;
         }
 
         if (4 <= debug) {
             (void)fprintf(logfd,
                           PROGNAME ": Trying %s, next %d, compare %d\n",
                           pxlate->oid, next, compare);
-            fflush(NULL);
+            fflush(logfd);
         }
         if (0 > compare) {
             // not yet, keep going
@@ -464,6 +515,7 @@ static const struct oid_mib_xlate *oid_lookup(const char *oid,
         if (4 <= debug) {
             (void)fprintf(logfd, PROGNAME ": match type %d need %s\n",
                           pxlate->type, gps_maskdump(pxlate->need));
+            fflush(logfd);
         }
         get_one(pxlate->need);      // fill gpsdata with what we need
 
@@ -504,10 +556,18 @@ static const struct oid_mib_xlate *oid_lookup(const char *oid,
             snprintf(outbuf, sizeof(outbuf), "%.255s", (char *)pxlate->pval);
             put_line(outbuf);
             break;
+        case t_time:
+            // 255 seems to be max STRING length.
+            put_line(pxlate->oid);
+            put_line("STRING");
+            put_line(timespec_to_iso8601(*(timespec_t *)pxlate->pval,
+                                         outbuf, sizeof(outbuf)));
+            break;
         default:
             (void)fprintf(logfd,
                           PROGNAME ": ERROR: internal error, OID %s\n\n",
                           oid);
+            fflush(logfd);
             // continue or abort?
             continue;
         }
@@ -524,7 +584,6 @@ static const struct oid_mib_xlate *oid_lookup(const char *oid,
 static void usage(char *prog_name) {
     const struct oid_mib_xlate *pxlate;
 
-    // don't add  --persist until is works...
     (void)printf("usage: %s [OPTIONS] [server[:port[:device]]]\n\n\
 Options include: \n\
   -?, -h, --help            = help message\n\
@@ -533,6 +592,7 @@ Options include: \n\
   -D, --debug LVL           = set debug level to LVL, default 0 \n\
   -g, --get OID             = get value for OID\n\
   -n, --next OID            = next OID value\n\
+  -p, --persist             = enter pass_persist mode\n\
   -V, --version             = emit version and exit.\n\n\
 Examples:\n\n\
 to get the number of saltellites seen with the OID\n\
@@ -641,6 +701,7 @@ int main (int argc, char **argv)
         default:
             (void)fprintf(logfd,
                           PROGNAME ": ERROR: Unknown option %c\n\n", ch);
+            fflush(logfd);
             do_usage = true;
             break;
         }
@@ -653,18 +714,25 @@ int main (int argc, char **argv)
 
     if (persist) {
         // debug, log to file
+        if (get || next) {
+            (void)fprintf(logfd,
+                PROGNAME ": ERROR: Use only one of: -g; -n; or -p.\n\n");
+            usage(PROGNAME);
+            exit(1);
+        }
         logfd = fopen("/tmp/gpssnmp.log", "a");
     } else {
         if (!get && !next) {
             (void)fprintf(logfd,
-                          PROGNAME ": ERROR: Missing option -g or -n\n\n");
+                          PROGNAME ": ERROR: You must specify one of: "
+                          "-g; -n; or -p.\n\n");
             usage(PROGNAME);
             exit(1);
         }
 
         if (get && next) {
             (void)fprintf(logfd,
-                PROGNAME ": ERROR: Use either -g or -n, not both\n\n");
+                PROGNAME ": ERROR: Use only one of: -g; -n; or -p.\n\n");
             usage(PROGNAME);
             exit(1);
         }
@@ -734,6 +802,8 @@ int main (int argc, char **argv)
     pxlate = oid_lookup(oid, next);
     if (NULL == pxlate ||
         NULL == pxlate->oid) {
+        // NONE is supposedly for persist mode only, but, why not?
+        put_line("NONE");
         // fell of the end of the list...
         (void)fprintf(logfd, PROGNAME ": ERROR: Unknown OID %s\n\n",
                       oid);

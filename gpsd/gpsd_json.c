@@ -1768,10 +1768,10 @@ void json_rtcm3_dump(const struct rtcm3_t *rtcm,
 
     case 1004:
         str_appendf(buf, buflen,
-                    "\"station_id\":%u,\"tow\":%d,\"sync\":\"%s\","
+                    "\"station_id\":%u,\"tow\":%lu,\"sync\":\"%s\","
                     "\"smoothing\":\"%s\",\"interval\":\"%u\",",
                     rtcm->rtcmtypes.rtcm3_1004.header.station_id,
-                    (int)rtcm->rtcmtypes.rtcm3_1004.header.tow,
+                    rtcm->rtcmtypes.rtcm3_1004.header.tow,
                     JSON_BOOL(rtcm->rtcmtypes.rtcm3_1004.header.sync),
                     JSON_BOOL(rtcm->rtcmtypes.rtcm3_1004.header.smoothing),
                     rtcm->rtcmtypes.rtcm3_1004.header.interval);
@@ -4522,8 +4522,12 @@ void json_att_dump(const struct gps_data_t *gpsdata,
             str_appendf(reply, replylen, ",\"mag_st\":\"%c\"", att->mag_st);
         }
     }
+    if (0 != isfinite(att->mheading)) {
+        str_appendf(reply, replylen, ",\"mheading\":%.3f", att->mheading);
+    }
     if (0 != isfinite(att->pitch)) {
-        str_appendf(reply, replylen, ",\"pitch\":%.2f", att->pitch);
+        // pypilot reports %.3f
+        str_appendf(reply, replylen, ",\"pitch\":%.3f", att->pitch);
         if ('\0' != att->pitch_st) {
             str_appendf(reply, replylen, ",\"pitch_st\":\"%c\"",
                         att->pitch_st);
@@ -4536,10 +4540,14 @@ void json_att_dump(const struct gps_data_t *gpsdata,
         }
     }
     if (0 != isfinite(att->roll)) {
-        str_appendf(reply, replylen, ",\"roll\":%.2f", att->roll);
+        // pypilot reports %.3f
+        str_appendf(reply, replylen, ",\"roll\":%.3f", att->roll);
         if ('\0' != att->roll_st) {
             str_appendf(reply, replylen, ",\"roll_st\":\"%c\"", att->roll_st);
         }
+    }
+    if (0 != isfinite(att->rot)) {
+        str_appendf(reply, replylen, ",\"rot\":%.3f", att->rot);
     }
 
     if (0 != isfinite(att->dip)) {

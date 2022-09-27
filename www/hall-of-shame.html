@@ -5,7 +5,7 @@
    <meta name="Description" content="Naming and shaming GPS vendors for especially botched designs">
    <meta name="Keywords" content="GPS, gpsd, shame">
    <meta name="Author" content="Eric S. Raymond">
-   <meta name="Revised" content="9 April 2015">
+   <meta name="Revised" content="21 September 2022">
    <meta name="robots" content="index,follow">
    <link rel="stylesheet" href="main.css" type="text/css">
    <title>GPS Hall of Shame</title>
@@ -32,7 +32,7 @@ GPS Hall of Shame
     <a href="hardware.html">Hardware</a><br>
     <a href="for-vendors.html">For GPS Vendors</a><br>
     <a href="wishlist.html">Wish List</a><br>
-    Hall of Shame<br>
+    <a href="#">Hall of Shame</a><br>
     <a href="troubleshooting.html">Troubleshooting Guide</a><br>
     <a href="hacking.html">Hacker's Guide</a><br>
     <a href="protocol-transition.html">Application Compatibility</a>
@@ -84,6 +84,26 @@ in the future.</p>
 <p>Your contributions are welcome.  If you're describing a firmware
 bug, it's best if you can identify the firmware version or range of
 versions it applies to.</p>
+
+<h2>NMEA violations</h2>
+
+<p>These are the screwups that lead us to wonder if the GPS chipset
+vendors ever read the NMEA documentation.</p>
+
+<ul>
+<li><p>When Qualcomm bought SiRF, they stopped releasing any documentation,
+and started get creative with their interpretations of NMEA.  Thenm starting
+adding new protocols.</p></li>
+
+<li><p>The QUalcomm SiRF-TriG, Furuno GT-88, Navlor CH-4701, and Quectel
+EG25-G, all emit broken $xxGSA sentences.  Each broken in  different ways.
+</p></li>
+
+<li><p>The Quectel-chipsets implement "Querky" interpretations of the
+NMEA protocol.  *gpsd* tries to implement workarounds when possiblem
+but it would be far better is Quectel developers read the NMEA
+protocol documentation.</p></li>
+</ul>
 
 <h2>Implementation blunders</h2>
 

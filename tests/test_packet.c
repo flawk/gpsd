@@ -55,8 +55,8 @@ static struct map singletests[] = {
     },
     {
         .legend = "NMEA packet without checksum",
-        .test = "$PSRF105,1\r\n",
-        .testlen = 12,
+        .test = "$STI,3\r\n",
+        .testlen = 8,
         .garbage_offset = 0,
         .type = NMEA_PACKET,
     },

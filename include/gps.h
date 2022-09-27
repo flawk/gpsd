@@ -101,6 +101,7 @@ extern "C" {
  *       Add prRes and qualityInd to satellite_t
  *       Add fixsource_t and watch_t to gps_data_t
  *       move privdata_t here from libgps/gps_sock.c
+ *       Add rot (Rate Of Turn), mheading, to struct attitude_t
  */
 #define GPSD_API_MAJOR_VERSION  14      // bump on incompatible changes
 #define GPSD_API_MINOR_VERSION  0       // bump on compatible changes
@@ -582,12 +583,12 @@ enum RTCM3_PROJECTION_TYPE
 
 // Used for both GPS and GLONASS, but their timebases differ
 struct rtcm3_rtk_hdr {          // header data from 1001, 1002, 1003, 1004
-    unsigned int station_id;    // Reference Station ID
-    time_t tow;                 // GNSS Epoch Time in ms
-    bool sync;                  // Synchronous GNSS Message Flag
-    unsigned short satcount;    // # Satellite Signals Processed
-    bool smoothing;             // Divergence-free Smoothing Indicator
-    unsigned int interval;      // Smoothing Interval
+    unsigned int station_id;    // Reference Station ID, DF003
+    unsigned long tow;          // GNSS Epoch Time in ms, DF004
+    bool sync;                  // Synchronous GNSS Message Flag, DF005
+    unsigned short satcount;    // # Satellite Signals Processed, DF006
+    bool smoothing;             // Divergence-free Smoothing Indicator, DF007
+    unsigned int interval;      // Smoothing Interval, DF008
 };
 
 struct rtcm3_basic_rtk {
@@ -2533,12 +2534,14 @@ struct attitude_t {
     double gyro_y;      // deg/s^2
     double gyro_z;      // deg/s^2
     double heading;     // true heading
+    double mheading;    // magnetic heading
     double mag_len;     // unitvector sqrt(x^2 + y^2 +z^2)
     double mag_x;
     double mag_y;
     double mag_z;
     double pitch;       // deg
     double roll;        // deg
+    double rot;         // rate of turn.  degrees / minute
     double temp;        // deg C
     double yaw;         // deg
     // compass status -- TrueNorth (and any similar) devices only

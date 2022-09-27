@@ -38,8 +38,8 @@ static struct fixsource_t source;
 static struct gps_data_t gpsdata;
 static FILE *logfile;
 static bool intrack = false;
-static time_t timeout = 5;      // seconds
-static double minmove = 0;      // meters
+static unsigned long timeout = 5;         // seconds
+static double minmove = 0;                // meters
 static int debug;
 static int sig_flag = 0;
 
@@ -367,7 +367,7 @@ int main(int argc, char **argv)
                 break;
             }
         case 'i':               // set polling interval
-            timeout = (time_t)atoi(optarg);
+            timeout = atoi(optarg);
             if (1 > timeout) {
                 timeout = 1;
             } else if (3600 <= timeout) {
@@ -469,7 +469,8 @@ int main(int argc, char **argv)
             break;
         }
         // avoid banging on reconnect
-        (void)sleep(timeout);
+        // (unsigned int) cast to shut up Coverity CID 355859
+        (void)sleep((unsigned int)timeout);
         syslog(LOG_INFO, "timeout; about to reconnect");
     }
 

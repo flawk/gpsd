@@ -97,6 +97,7 @@ void gpsd_release_reporting_lock(void)
 }
 
 // assemble msg in vprintf(3) style, use errout hook or syslog for delivery
+// FIXME: duplicated in gpsd/libgpsd_core.c
 static void gpsd_vlog(const int errlevel,
                       const struct gpsd_errout_t *errout,
                       char *outbuf, size_t outlen,
@@ -1615,9 +1616,10 @@ gps_mask_t gpsd_poll(struct gps_device_t *session)
         newlen = session->device_type->get_packet(session);
         // coverity[deref_ptr]
         GPSD_LOG(LOG_RAW, &session->context->errout,
-                 "CORE: %s is known to be %s\n",
+                 "CORE: %s is known to be %s, packet type %d\n",
                  session->gpsdata.dev.path,
-                 session->device_type->type_name);
+                 session->device_type->type_name,
+                 session->lexer.type);
     } else {
         newlen = generic_get(session);
     }
@@ -1814,13 +1816,13 @@ gps_mask_t gpsd_poll(struct gps_device_t *session)
              gpsd_prettydump(session));
 
     // Get data from current packet into the fix structure
-    if (COMMENT_PACKET != session->lexer.type) {
-        if (NULL != session->device_type &&
-            NULL != session->device_type->parse_packet) {
+    if (COMMENT_PACKET != session->lexer.type &&
+        BAD_PACKET != session->lexer.type &&
+        NULL != session->device_type &&
+        NULL != session->device_type->parse_packet) {
             received |= session->device_type->parse_packet(session);
             GPSD_LOG(LOG_SPIN, &session->context->errout,
                      "CORE: parse_packet() = %s\n", gps_maskdump(received));
-        }
     }
 
     /*
